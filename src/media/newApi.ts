@@ -299,12 +299,9 @@ export class StreamController extends EventEmitter {
         }
     }
 
-    public async seek(timestamp: number): Promise<void> {
-        // Implementation depends on the input source type
-        // This is a placeholder for the seek functionality
-        this.emit('seeking', timestamp);
-        // Actual seek implementation would go here
-        this.emit('seeked', timestamp);
+    public async seek(ms: number): Promise<void> {
+        this._videoStream?.seek(ms);
+        this._audioStream?.seek(ms);
     }
 
     public stop(): void {

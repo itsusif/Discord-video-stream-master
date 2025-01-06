@@ -178,12 +178,9 @@ export class StreamController extends EventEmitter {
             this._udp?.mediaConnection.setSpeaking(true);
         }
     }
-    async seek(timestamp) {
-        // Implementation depends on the input source type
-        // This is a placeholder for the seek functionality
-        this.emit('seeking', timestamp);
-        // Actual seek implementation would go here
-        this.emit('seeked', timestamp);
+    async seek(ms) {
+        this._videoStream?.seek(ms);
+        this._audioStream?.seek(ms);
     }
     stop() {
         this._stopStream();

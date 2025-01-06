@@ -69,7 +69,7 @@ export declare class StreamController extends EventEmitter {
     get isPaused(): boolean;
     pause(): void;
     resume(): void;
-    seek(timestamp: number): Promise<void>;
+    seek(ms: number): Promise<void>;
     stop(): void;
     setStreams(videoStream: VideoStream, audioStream: AudioStream | null, udp: MediaUdp): void;
 }
