@@ -537,7 +537,9 @@ export class StreamController extends EventEmitter {
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
 
-            this.isSeekInProgress = false
+            this.isSeekInProgress = false;
+            this.isMuted = false;
+            this.isPaused = false;
         } catch (error) {
             this.isSeekInProgress = false;
             this.emit('error', error);
