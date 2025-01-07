@@ -81,6 +81,7 @@ export declare class StreamController extends EventEmitter {
     private pauseStartTime?;
     private totalPausedTime;
     constructor(streamer: Streamer, udp: MediaUdp, inputSource: string, options: any);
+    setOptions(options: any): void;
     private setupPtsTracking;
     private cleanupStreams;
     setStreams(videoStream: VideoStream, audioStream?: AudioStream): void;

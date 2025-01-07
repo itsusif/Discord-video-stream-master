@@ -169,6 +169,9 @@ export class StreamController extends EventEmitter {
         this.options = options;
         this.startTime = Date.now();
     }
+    setOptions(options) {
+        this.options = options;
+    }
     setupPtsTracking(vStream) {
         const ptsHandler = () => {
             if (vStream.pts === undefined)
