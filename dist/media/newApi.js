@@ -244,6 +244,7 @@ export class StreamController extends EventEmitter {
             })
         };
         const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
+        command.seek(seekTime);
         command.on('error', (err) => {
             if (!err.message.includes('SIGKILL')) {
                 this.emit('error', err);
