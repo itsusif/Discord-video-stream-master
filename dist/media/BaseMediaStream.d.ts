@@ -7,6 +7,7 @@ export declare class BaseMediaStream extends Writable {
     private _loggerSync;
     private _loggerSleep;
     private _isPaused;
+    private _isMuted;
     private _pauseStartTime?;
     private _totalPausedTime;
     private _seekTarget?;
@@ -20,6 +21,7 @@ export declare class BaseMediaStream extends Writable {
     private _startPts?;
     syncStream?: BaseMediaStream;
     constructor(type: string, noSleep?: boolean);
+    get isMuted(): boolean;
     get pts(): number | undefined;
     get currentTime(): number;
     get isPaused(): boolean;
@@ -27,11 +29,11 @@ export declare class BaseMediaStream extends Writable {
     set syncTolerance(n: number);
     protected _waitForOtherStream(): Promise<void>;
     protected _sendFrame(frame: Buffer, frametime: number): Promise<void>;
+    protected _sendFrameWithMute(frame: Buffer, frametime: number): Promise<void>;
     private _ptsToMs;
     private _handleSeek;
     private _resetStreamState;
     _write(frame: Packet, _: BufferEncoding, callback: (error?: Error | null) => void): Promise<void>;
-    private _processPacket;
     _destroy(error: Error | null, callback: (error?: Error | null) => void): void;
     pause(): this;
     resume(): this;
@@ -39,4 +41,8 @@ export declare class BaseMediaStream extends Writable {
     onn(event: 'seeking' | 'seeked', listener: (timestamp: number) => void): this;
     off(event: 'seeking' | 'seeked', listener: (timestamp: number) => void): this;
     resetPauseState(): void;
+    _processPacket(packet: Packet): Promise<void>;
+    mute(): this;
+    unmute(): this;
+    toggleMute(): this;
 }

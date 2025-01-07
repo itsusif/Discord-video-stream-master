@@ -12,6 +12,7 @@ export class BaseMediaStream extends Writable {
     private _loggerSync: Log;
     private _loggerSleep: Log;
     private _isPaused: boolean = false;
+    private _isMuted: boolean = false;
     private _pauseStartTime?: number;
     private _totalPausedTime: number = 0;
     private _seekTarget?: number;
@@ -34,6 +35,10 @@ export class BaseMediaStream extends Writable {
         this._loggerSleep = new Log(`stream:${type}:sleep`);
         this._noSleep = noSleep;
         this._emitter = new EventEmitter();
+    }
+
+    get isMuted(): boolean {
+        return this._isMuted;
     }
 
     get pts(): number | undefined {
@@ -79,6 +84,14 @@ export class BaseMediaStream extends Writable {
     protected async _sendFrame(frame: Buffer, frametime: number): Promise<void> {
         throw new Error("Not implemented");
     }
+
+    protected async _sendFrameWithMute(frame: Buffer, frametime: number): Promise<void> {
+        if (!this._isMuted) {
+            await this._sendFrame(frame, frametime);
+        }
+        // If muted, we skip sending but continue processing
+    }
+
 
     private _ptsToMs(packet: Packet): number {
         const { ptshi, pts, time_base_num, time_base_den } = packet;
@@ -153,66 +166,6 @@ export class BaseMediaStream extends Writable {
         }
     }
 
-    private async _processPacket(packet: Packet): Promise<void> {
-        const { data, durationhi, duration, time_base_num, time_base_den } = packet;
-        const framePts = this._ptsToMs(packet);
-
-        if (this._startTime === undefined) {
-            this._startTime = performance.now();
-            this._startPts = framePts;
-        }
-
-        while (this._isPaused) {
-            await setTimeout(50);
-        }
-
-        await this._waitForOtherStream();
-
-        this.emit('pts', this._pts);
-        const frametime = combineLoHi(durationhi!, duration!) / time_base_den! * time_base_num! * 1000;
-        const start = performance.now();
-        
-        await this._sendFrame(Buffer.from(data), frametime);
-        
-        const end = performance.now();
-        this._pts = framePts;
-        this._currentTime = framePts - (this._firstPts ?? 0);
-
-        const sendTime = end - start;
-        const ratio = sendTime / frametime;
-
-        // Logging...
-        this._loggerSend.debug({
-            stats: {
-                pts: this._pts,
-                currentTime: this._currentTime,
-                frame_size: data.length,
-                duration: sendTime,
-                frametime
-            }
-        }, `Frame sent in ${sendTime.toFixed(2)}ms (${(ratio * 100).toFixed(2)}% frametime)`);
-
-        if (ratio > 1) {
-            this._loggerSend.warn({
-                frame_size: data.length,
-                duration: sendTime,
-                frametime
-            }, `Frame takes too long to send (${(ratio * 100).toFixed(2)}% frametime)`);
-        }
-
-        const now = performance.now();
-        const adjustedNow = now - this._totalPausedTime;
-        const sleep = Math.max(0, this._pts - (this._startPts ?? 0) - (adjustedNow - this._startTime!));
-        
-        this._loggerSleep.debug(`Sleeping for ${sleep}ms`);
-        
-        if (this._noSleep) {
-            return;
-        }
-        
-        await setTimeout(sleep);
-    }
-
     _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
         super._destroy(error, callback);
         this.syncStream = undefined;
@@ -280,4 +233,93 @@ export class BaseMediaStream extends Writable {
         this._pauseStartTime = undefined;
         this._totalPausedTime = 0;
     }
+
+    async _processPacket(packet: Packet): Promise<void> {
+        const { data, durationhi, duration, time_base_num, time_base_den } = packet;
+        const framePts = this._ptsToMs(packet);
+
+        if (this._startTime === undefined) {
+            this._startTime = performance.now();
+            this._startPts = framePts;
+        }
+
+        while (this._isPaused) {
+            await setTimeout(50);
+        }
+
+        await this._waitForOtherStream();
+
+        this.emit('pts', this._pts);
+        const frametime = combineLoHi(durationhi!, duration!) / time_base_den! * time_base_num! * 1000;
+        const start = performance.now();
+        
+        // Use _sendFrameWithMute instead of _sendFrame
+        await this._sendFrameWithMute(Buffer.from(data), frametime);
+        
+        const end = performance.now();
+        this._pts = framePts;
+        this._currentTime = framePts - (this._firstPts ?? 0);
+
+        const sendTime = end - start;
+        const ratio = sendTime / frametime;
+
+        this._loggerSend.debug({
+            stats: {
+                pts: this._pts,
+                currentTime: this._currentTime,
+                frame_size: data.length,
+                duration: sendTime,
+                frametime,
+                muted: this._isMuted
+            }
+        }, `Frame ${this._isMuted ? 'processed' : 'sent'} in ${sendTime.toFixed(2)}ms (${(ratio * 100).toFixed(2)}% frametime)`);
+
+        if (ratio > 1) {
+            this._loggerSend.warn({
+                frame_size: data.length,
+                duration: sendTime,
+                frametime
+            }, `Frame takes too long to ${this._isMuted ? 'process' : 'send'} (${(ratio * 100).toFixed(2)}% frametime)`);
+        }
+
+        const now = performance.now();
+        const adjustedNow = now - this._totalPausedTime;
+        const sleep = Math.max(0, this._pts - (this._startPts ?? 0) - (adjustedNow - this._startTime!));
+        
+        this._loggerSleep.debug(`Sleeping for ${sleep}ms`);
+        
+        if (this._noSleep) {
+            return;
+        }
+        
+        await setTimeout(sleep);
+    }
+
+    mute(): this {
+        if (!this._isMuted) {
+            this._isMuted = true;
+            this._loggerSend.debug('Stream muted');
+            this._emitter.emit('muted');
+        }
+        return this;
+    }
+
+    unmute(): this {
+        if (this._isMuted) {
+            this._isMuted = false;
+            this._loggerSend.debug('Stream unmuted');
+            this._emitter.emit('unmuted');
+        }
+        return this;
+    }
+
+    toggleMute(): this {
+        if (this._isMuted) {
+            this.unmute();
+        } else {
+            this.mute();
+        }
+        return this;
+    }
+
 }

@@ -309,9 +309,9 @@ export class StreamController extends EventEmitter {
             return;
         this.isMuted = true;
         // Pause audio stream if exists
-        // if (this.audioStream) {
-        //     this.audioStream.pause();
-        // }
+        if (this.audioStream) {
+            this.audioStream.mute();
+        }
         this.udp.mediaConnection.setSpeaking(false);
         this.emit('muted');
     }
@@ -320,9 +320,9 @@ export class StreamController extends EventEmitter {
             return;
         this.isMuted = false;
         // Resume audio stream if exists
-        // if (this.audioStream) {
-        //     this.audioStream.resume();
-        // }
+        if (this.audioStream) {
+            this.audioStream.unmute();
+        }
         this.udp.mediaConnection.setSpeaking(true);
         this.emit('unmuted');
     }
