@@ -67,6 +67,7 @@ export class BaseMediaStream extends Writable {
         // Calculate absolute time position
         const absoluteTime = framePts - (this._firstPts ?? 0);
         this._currentTime = absoluteTime;
+        console.log(this._isBackwardSeek, absoluteTime, this._seekTarget);
         // Handle backward seek
         if (this._isBackwardSeek) {
             // Store packet if we haven't reached target yet
@@ -186,6 +187,7 @@ export class BaseMediaStream extends Writable {
     seek(targetMs) {
         if (targetMs < 0)
             return this;
+        console.log(targetMs);
         this._loggerSend.debug(`Seeking to ${targetMs}ms`);
         this._emitter.emit('seeking', targetMs);
         // Determine seek direction
