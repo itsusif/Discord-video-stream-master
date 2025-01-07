@@ -184,7 +184,6 @@ export class StreamController extends EventEmitter {
             if (this.isSeekInProgress) {
                 console.log(`Seeking to: ${this.nextSeekTarget}, Current: ${this.getCurrentPosition()}`);
                 if (Math.abs(this.getCurrentPosition() - (this.nextSeekTarget || 0)) < 1000) {
-                    this.isSeekInProgress = false;
                     this.emit('seeked', this.getCurrentPosition());
                 }
             }
