@@ -445,7 +445,7 @@ export class StreamController extends EventEmitter {
 
         try {
             console.log('Starting new stream');
-            const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
+            const { command, output } = prepareStream(this.inputSource, this.options);
             console.log('Stream started');
             // command.seek(seekTime);
             console.log('Seeked to:', seekTime);
@@ -459,9 +459,11 @@ export class StreamController extends EventEmitter {
             this.currentCommand = command;
             this.currentOutput = output;
 
+            console.log('Stream setup complete');
             const { video, audio } = await demux(output);
             if (!video) throw new Error("No video stream found");
 
+            console.log('Demux complete');
             await this.setupStreams(video, audio);
             return { video, audio };
         } catch (err) {
