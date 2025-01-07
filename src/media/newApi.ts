@@ -274,8 +274,8 @@ interface StreamInfo {
 export class StreamController extends EventEmitter {
     private currentCommand?: ffmpeg.FfmpegCommand;
     private currentOutput?: PassThrough;
-    private videoStream?: VideoStream;
-    private audioStream?: AudioStream;
+    public videoStream?: VideoStream;
+    public audioStream?: AudioStream;
     private udp: MediaUdp;
     private streamer: Streamer;
     private inputSource: string;
@@ -472,18 +472,10 @@ export class StreamController extends EventEmitter {
 
         this.isMuted = true;
 
-        if (this.currentCommand) {
-            // Store current volume if needed later
-            this.originalVolume = this.options.bitrateAudio;
-
-            // Set volume to 0 in ffmpeg
-            this.currentCommand.audioFilters(`volume=0`);
-        }
-
         // Pause audio stream if exists
-        if (this.audioStream) {
-            this.audioStream.pause();
-        }
+        // if (this.audioStream) {
+        //     this.audioStream.pause();
+        // }
 
         this.udp.mediaConnection.setSpeaking(false);
         this.emit('muted');
@@ -494,17 +486,10 @@ export class StreamController extends EventEmitter {
 
         this.isMuted = false;
 
-        if (this.currentCommand) {
-            // Restore original volume if it was stored
-            if (this.originalVolume) {
-                this.currentCommand.audioFilters(`volume=1`);
-            }
-        }
-
         // Resume audio stream if exists
-        if (this.audioStream) {
-            this.audioStream.resume();
-        }
+        // if (this.audioStream) {
+        //     this.audioStream.resume();
+        // }
 
         this.udp.mediaConnection.setSpeaking(true);
         this.emit('unmuted');

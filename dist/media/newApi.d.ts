@@ -61,8 +61,8 @@ export declare function prepareStream(input: string | Readable, options?: Partia
 export declare class StreamController extends EventEmitter {
     private currentCommand?;
     private currentOutput?;
-    private videoStream?;
-    private audioStream?;
+    videoStream?: VideoStream;
+    audioStream?: AudioStream;
     private udp;
     private streamer;
     private inputSource;
