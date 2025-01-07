@@ -68,7 +68,7 @@ export declare class StreamController extends EventEmitter {
     private inputSource;
     private options;
     private isDestroyed;
-    constructor(streamer: Streamer, udp: MediaUdp, inputSource: string | Readable, options: any);
+    constructor(streamer: Streamer, udp: MediaUdp, inputSource: string, options: any);
     private startNewStream;
     private setupStreams;
     setStreams(videoStream: VideoStream, audioStream?: AudioStream): void;
@@ -107,4 +107,4 @@ export type PlayStreamOptions = {
      */
     forceChacha20Encryption: boolean;
 };
-export declare function playStream(input: Readable, streamer: Streamer, options?: Partial<PlayStreamOptions>): Promise<StreamController>;
+export declare function playStream(dir: string, input: Readable, streamer: Streamer, options?: Partial<PlayStreamOptions>): Promise<StreamController>;

@@ -278,14 +278,14 @@ export class StreamController extends EventEmitter {
     private audioStream?: AudioStream;
     private udp: MediaUdp;
     private streamer: Streamer;
-    private inputSource: string | Readable;
+    private inputSource: string;
     private options: any;
     private isDestroyed: boolean = false;
 
     constructor(
         streamer: Streamer,
         udp: MediaUdp,
-        inputSource: string | Readable,
+        inputSource: string,
         options: any
     ) {
         super();
@@ -308,6 +308,7 @@ export class StreamController extends EventEmitter {
         const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
         this.currentCommand = command;
         this.currentOutput = output;
+        command.seek(seekTime);
 
         // Setup new streams
         const { video, audio } = await demux(output);
@@ -469,6 +470,7 @@ export type PlayStreamOptions = {
 }
 
 export async function playStream(
+    dir: string,
     input: Readable,
     streamer: Streamer,
     options: Partial<PlayStreamOptions> = {}
@@ -560,7 +562,7 @@ export async function playStream(
     udp.mediaConnection.setVideoStatus(true);
 
     // Create controller and streams
-    const controller = new StreamController(streamer, udp, input, options);
+    const controller = new StreamController(streamer, udp, dir, options);
     const vStream = new VideoStream(udp);
     demuxResult.video.stream.pipe(vStream);
 

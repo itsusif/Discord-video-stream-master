@@ -173,6 +173,7 @@ export class StreamController extends EventEmitter {
         const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
         this.currentCommand = command;
         this.currentOutput = output;
+        command.seek(seekTime);
         // Setup new streams
         const { video, audio } = await demux(output);
         if (!video)
@@ -281,7 +282,7 @@ export class StreamController extends EventEmitter {
         this.emit('stopped');
     }
 }
-export async function playStream(input, streamer, options = {}) {
+export async function playStream(dir, input, streamer, options = {}) {
     if (!streamer.voiceConnection) {
         throw new Error("Bot is not connected to a voice channel");
     }
@@ -348,7 +349,7 @@ export async function playStream(input, streamer, options = {}) {
     udp.mediaConnection.setSpeaking(true);
     udp.mediaConnection.setVideoStatus(true);
     // Create controller and streams
-    const controller = new StreamController(streamer, udp, input, options);
+    const controller = new StreamController(streamer, udp, dir, options);
     const vStream = new VideoStream(udp);
     demuxResult.video.stream.pipe(vStream);
     if (demuxResult.audio) {
