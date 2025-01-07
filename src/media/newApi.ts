@@ -184,6 +184,7 @@ export function prepareStream(
     }
 
     if (isHttpUrl) {
+        console.log(customHeaders, isHttpUrl)
         command.inputOption('-headers',
             Object.entries(customHeaders).map(([k, v]) => `${k}: ${v}`).join("\r\n")
         );
