@@ -153,69 +153,79 @@ export function prepareStream(input, options = {}) {
     return { command, output };
 }
 export class StreamController extends EventEmitter {
-    constructor(streamer, stopStream) {
+    constructor(demuxer, udp, stopStreamFn) {
         super();
-        this._isPaused = false;
-        this._streamer = streamer;
-        this._stopStream = stopStream;
+        this.demuxer = demuxer;
+        this.udp = udp;
+        this.stopStreamFn = stopStreamFn;
     }
-    get isPaused() {
-        return this._isPaused;
-    }
-    pause() {
-        if (!this._isPaused) {
-            this._isPaused = true;
-            this._videoStream?.pause();
-            this._audioStream?.pause();
-            this._udp?.mediaConnection.setSpeaking(false);
-        }
-    }
-    resume() {
-        if (this._isPaused) {
-            this._isPaused = false;
-            this._videoStream?.resume();
-            this._audioStream?.resume();
-            this._udp?.mediaConnection.setSpeaking(true);
-        }
-    }
-    async seek(ms) {
-        this._videoStream?.seek(ms);
-        this._audioStream?.seek(ms);
-    }
-    stop() {
-        this._stopStream();
-        this._udp?.mediaConnection.setSpeaking(false);
-        this._udp?.mediaConnection.setVideoStatus(false);
-        this._videoStream?.destroy();
-        this._audioStream?.destroy();
-        this.emit('stopped');
-    }
-    setStreams(videoStream, audioStream, udp) {
-        this._videoStream = videoStream;
-        this._audioStream = audioStream;
-        this._udp = udp;
+    setStreams(videoStream, audioStream) {
+        this.videoStream = videoStream;
+        this.audioStream = audioStream;
         videoStream.on('finish', () => {
             this.emit('finished');
             this.stop();
         });
-        videoStream.on('error', (error) => {
-            this.emit('error', error);
-            this.stop();
-        });
-        if (audioStream) {
-            audioStream.on('error', (error) => {
-                this.emit('error', error);
-                this.stop();
-            });
+    }
+    async seek(time) {
+        try {
+            this.emit('seeking', time);
+            // Destroy current streams
+            this.videoStream?.destroy();
+            this.audioStream?.destroy();
+            // Seek in demuxer
+            await this.demuxer.seek(time);
+            // Get new streams after seek
+            const { video, audio } = await demux(this.demuxer);
+            if (!video)
+                throw new Error("No video stream after seek");
+            // Create new streams
+            const vStream = new VideoStream(this.udp);
+            video.stream.pipe(vStream);
+            if (audio) {
+                const aStream = new AudioStream(this.udp);
+                audio.stream.pipe(aStream);
+                vStream.syncStream = aStream;
+                aStream.syncStream = vStream;
+                this.setStreams(vStream, aStream);
+            }
+            else {
+                this.setStreams(vStream);
+            }
+            this.emit('seeked', time);
         }
+        catch (error) {
+            this.emit('error', error);
+        }
+    }
+    pause() {
+        this.videoStream?.pause();
+        this.audioStream?.pause();
+        this.udp.mediaConnection.setSpeaking(false);
+    }
+    resume() {
+        this.videoStream?.resume();
+        this.audioStream?.resume();
+        this.udp.mediaConnection.setSpeaking(true);
+    }
+    stop() {
+        this.videoStream?.destroy();
+        this.audioStream?.destroy();
+        this.stopStreamFn();
+        this.udp.mediaConnection.setSpeaking(false);
+        this.udp.mediaConnection.setVideoStatus(false);
+        this.emit('stopped');
     }
 }
 export async function playStream(input, streamer, options = {}) {
-    if (!streamer.voiceConnection)
+    if (!streamer.voiceConnection) {
         throw new Error("Bot is not connected to a voice channel");
-    const { video, audio } = await demux(input);
-    if (!video)
+    }
+    // Setup demuxer first
+    const demuxResult = await demux(input);
+    if (!demuxResult.video) {
         throw new Error("No video stream in media");
+    }
     const videoCodecMap = {
         [AVCodecID.AV_CODEC_ID_H264]: "H264",
         [AVCodecID.AV_CODEC_ID_H265]: "H265",
@@ -225,9 +235,9 @@ export async function playStream(input, streamer, options = {}) {
     };
     const defaultOptions = {
         type: "go-live",
-        width: video.width,
-        height: video.height,
-        frameRate: video.framerate_num / video.framerate_den,
+        width: demuxResult.video.width,
+        height: demuxResult.video.height,
+        frameRate: demuxResult.video.framerate_num / demuxResult.video.framerate_den,
         rtcpSenderReportEnabled: true,
         forceChacha20Encryption: false
     };
@@ -248,21 +258,23 @@ export async function playStream(input, streamer, options = {}) {
         };
     }
     const mergedOptions = mergeOptions(options);
+    // Create UDP connection
     let udp;
     let stopStream;
-    if (mergedOptions.type === "go-live") {
-        udp = await streamer.createStream();
-        stopStream = () => streamer.stopStream();
-    }
-    else {
+    if (options.type === "camera") {
         udp = streamer.voiceConnection.udp;
         streamer.signalVideo(true);
         stopStream = () => streamer.signalVideo(false);
     }
+    else {
+        udp = await streamer.createStream();
+        stopStream = () => streamer.stopStream();
+    }
+    // Setup media connection
     udp.mediaConnection.streamOptions = {
         width: mergedOptions.width,
         height: mergedOptions.height,
-        videoCodec: videoCodecMap[video.codec],
+        videoCodec: videoCodecMap[demuxResult.video.codec],
         fps: mergedOptions.frameRate,
         rtcpSenderReportEnabled: mergedOptions.rtcpSenderReportEnabled,
         forceChacha20Encryption: mergedOptions.forceChacha20Encryption
@@ -271,18 +283,19 @@ export async function playStream(input, streamer, options = {}) {
     udp.updatePacketizer();
     udp.mediaConnection.setSpeaking(true);
     udp.mediaConnection.setVideoStatus(true);
-    const controller = new StreamController(streamer, stopStream);
+    // Create controller and streams
+    const controller = new StreamController(demuxResult, udp, stopStream);
     const vStream = new VideoStream(udp);
-    video.stream.pipe(vStream);
-    if (audio) {
+    demuxResult.video.stream.pipe(vStream);
+    if (demuxResult.audio) {
         const aStream = new AudioStream(udp);
-        audio.stream.pipe(aStream);
+        demuxResult.audio.stream.pipe(aStream);
         vStream.syncStream = aStream;
         aStream.syncStream = vStream;
-        controller.setStreams(vStream, aStream, udp);
+        controller.setStreams(vStream, aStream);
     }
     else {
-        controller.setStreams(vStream, null, udp);
+        controller.setStreams(vStream);
     }
     return controller;
 }

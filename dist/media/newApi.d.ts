@@ -59,19 +59,17 @@ export declare function prepareStream(input: string | Readable, options?: Partia
     output: PassThrough;
 };
 export declare class StreamController extends EventEmitter {
-    private _videoStream?;
-    private _audioStream?;
-    private _isPaused;
-    private _udp?;
-    private _streamer;
-    private _stopStream;
-    constructor(streamer: Streamer, stopStream: () => unknown);
-    get isPaused(): boolean;
+    private demuxer;
+    videoStream?: VideoStream;
+    audioStream?: AudioStream;
+    private udp;
+    private stopStreamFn;
+    constructor(demuxer: any, udp: MediaUdp, stopStreamFn: () => void);
+    setStreams(videoStream: VideoStream, audioStream?: AudioStream): void;
+    seek(time: number): Promise<void>;
     pause(): void;
     resume(): void;
-    seek(ms: number): Promise<void>;
     stop(): void;
-    setStreams(videoStream: VideoStream, audioStream: AudioStream | null, udp: MediaUdp): void;
 }
 export type PlayStreamOptions = {
     /**
