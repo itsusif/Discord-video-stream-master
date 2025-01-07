@@ -444,14 +444,18 @@ export class StreamController extends EventEmitter {
         };
 
         try {
+            console.log('Starting new stream');
             const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
+            console.log('Stream started');
             command.seek(seekTime);
+            console.log('Seeked to:', seekTime);
             command.on('error', (err: Error) => {
+                console.log(err, 'err')
                 if (!err.message.includes('SIGKILL')) {
                     this.emit('error', err);
                 }
             });
-
+            console.log('Command error listener added');
             this.currentCommand = command;
             this.currentOutput = output;
 
