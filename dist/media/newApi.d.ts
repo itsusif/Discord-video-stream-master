@@ -72,6 +72,7 @@ export declare class StreamController extends EventEmitter {
     private isSeekInProgress;
     private nextSeekTarget?;
     constructor(streamer: Streamer, udp: MediaUdp, inputSource: string, options: any);
+    private cleanupStreams;
     setStreams(videoStream: VideoStream, audioStream?: AudioStream): void;
     private cleanupCurrentPlayback;
     private startNewStream;

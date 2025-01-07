@@ -163,6 +163,16 @@ export class StreamController extends EventEmitter {
         this.inputSource = inputSource;
         this.options = options;
     }
+    cleanupStreams() {
+        if (this.videoStream) {
+            this.videoStream.removeAllListeners();
+            this.videoStream.destroy();
+        }
+        if (this.audioStream) {
+            this.audioStream.removeAllListeners();
+            this.audioStream.destroy();
+        }
+    }
     setStreams(videoStream, audioStream) {
         // Clean up old streams
         this.cleanupStreams();
