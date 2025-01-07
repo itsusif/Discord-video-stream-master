@@ -203,6 +203,7 @@ export class BaseMediaStream extends Writable {
         const adjustedNow = now - this._totalPausedTime;
         const sleep = Math.max(0, this._pts - (this._startPts ?? 0) - (adjustedNow - this._startTime!));
         
+        this.emit('pts', this._pts);
         this._loggerSleep.debug(`Sleeping for ${sleep}ms`);
         
         if (this._noSleep) {
