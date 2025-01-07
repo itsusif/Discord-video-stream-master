@@ -313,9 +313,13 @@ export class StreamController extends EventEmitter {
         }
     }
     setupStreams(video, audio) {
+        console.log('Setting up streams');
         const vStream = new VideoStream(this.udp, false);
+        console.log('Video stream created');
         video.stream.pipe(vStream);
+        console.log('Piping video stream');
         this.setupPtsTracking(vStream);
+        console.log('PTS tracking setup');
         if (audio) {
             const aStream = new AudioStream(this.udp, false);
             audio.stream.pipe(aStream);
