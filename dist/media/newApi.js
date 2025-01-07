@@ -301,13 +301,13 @@ export class StreamController extends EventEmitter {
         else {
             this.setStreams(vStream);
         }
+        this.isSeekInProgress = false;
     }
     async seek(timestamp) {
         if (this.isDestroyed)
             return;
         timestamp = Math.max(0, timestamp);
         if (this.isSeekInProgress) {
-            this.nextSeekTarget = timestamp;
             return;
         }
         try {
@@ -326,6 +326,7 @@ export class StreamController extends EventEmitter {
             await this.startNewStream(timestamp / 1000);
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
+            this.isSeekInProgress = false;
         }
         catch (error) {
             this.isSeekInProgress = false;

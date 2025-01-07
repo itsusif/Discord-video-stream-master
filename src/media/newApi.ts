@@ -462,6 +462,7 @@ export class StreamController extends EventEmitter {
         } else {
             this.setStreams(vStream);
         }
+        this.isSeekInProgress = false;
     }
 
 
@@ -471,7 +472,6 @@ export class StreamController extends EventEmitter {
         timestamp = Math.max(0, timestamp);
 
         if (this.isSeekInProgress) {
-            this.nextSeekTarget = timestamp;
             return;
         }
 
@@ -495,6 +495,8 @@ export class StreamController extends EventEmitter {
 
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
+
+            this.isSeekInProgress = false
         } catch (error) {
             this.isSeekInProgress = false;
             this.emit('error', error);
