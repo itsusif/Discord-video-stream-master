@@ -153,65 +153,129 @@ export function prepareStream(input, options = {}) {
     return { command, output };
 }
 export class StreamController extends EventEmitter {
-    constructor(demuxer, udp, stopStreamFn) {
+    constructor(streamer, udp, inputSource, options) {
         super();
-        this.demuxer = demuxer;
+        this.isDestroyed = false;
+        this.streamer = streamer;
         this.udp = udp;
-        this.stopStreamFn = stopStreamFn;
+        this.inputSource = inputSource;
+        this.options = options;
+    }
+    async startNewStream(seekTime) {
+        // Create new ffmpeg command with seek if specified
+        const ffmpegOptions = {
+            ...this.options,
+            ...(seekTime !== undefined && {
+                seekInput: seekTime,
+                minimizeLatency: true, // Reduce latency for seeks
+            })
+        };
+        const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
+        this.currentCommand = command;
+        this.currentOutput = output;
+        // Setup new streams
+        const { video, audio } = await demux(output);
+        if (!video)
+            throw new Error("No video stream found");
+        await this.setupStreams(video, audio);
+        return { video, audio };
+    }
+    async setupStreams(video, audio) {
+        // Create new video stream
+        const vStream = new VideoStream(this.udp, false); // noSleep = false for better sync
+        video.stream.pipe(vStream);
+        // Create new audio stream if available
+        if (audio) {
+            const aStream = new AudioStream(this.udp, false);
+            audio.stream.pipe(aStream);
+            vStream.syncStream = aStream;
+            aStream.syncStream = vStream;
+            this.setStreams(vStream, aStream);
+        }
+        else {
+            this.setStreams(vStream);
+        }
     }
     setStreams(videoStream, audioStream) {
+        // Clean up old streams
+        this.cleanupStreams();
         this.videoStream = videoStream;
         this.audioStream = audioStream;
         videoStream.on('finish', () => {
-            this.emit('finished');
-            this.stop();
+            if (!this.isDestroyed) {
+                this.emit('finished');
+                this.stop();
+            }
         });
+        videoStream.on('error', (error) => {
+            if (!this.isDestroyed) {
+                this.emit('error', error);
+                this.stop();
+            }
+        });
+        if (audioStream) {
+            audioStream.on('error', (error) => {
+                if (!this.isDestroyed) {
+                    this.emit('error', error);
+                    this.stop();
+                }
+            });
+        }
     }
-    async seek(time) {
+    cleanupStreams() {
+        if (this.videoStream) {
+            this.videoStream.removeAllListeners();
+            this.videoStream.destroy();
+        }
+        if (this.audioStream) {
+            this.audioStream.removeAllListeners();
+            this.audioStream.destroy();
+        }
+    }
+    async seek(timestamp) {
+        if (this.isDestroyed)
+            return;
         try {
-            this.emit('seeking', time);
-            // Destroy current streams
-            this.videoStream?.destroy();
-            this.audioStream?.destroy();
-            // Seek in demuxer
-            await this.demuxer.seek(time);
-            // Get new streams after seek
-            const { video, audio } = await demux(this.demuxer);
-            if (!video)
-                throw new Error("No video stream after seek");
-            // Create new streams
-            const vStream = new VideoStream(this.udp);
-            video.stream.pipe(vStream);
-            if (audio) {
-                const aStream = new AudioStream(this.udp);
-                audio.stream.pipe(aStream);
-                vStream.syncStream = aStream;
-                aStream.syncStream = vStream;
-                this.setStreams(vStream, aStream);
-            }
-            else {
-                this.setStreams(vStream);
-            }
-            this.emit('seeked', time);
+            this.emit('seeking', timestamp);
+            // Pause current playback
+            this.udp.mediaConnection.setSpeaking(false);
+            // Clean up existing streams
+            this.cleanupStreams();
+            this.currentCommand?.kill('SIGKILL');
+            this.currentOutput?.destroy();
+            // Start new stream with seek
+            await this.startNewStream(timestamp / 1000); // Convert to seconds
+            // Resume playback
+            this.udp.mediaConnection.setSpeaking(true);
+            this.emit('seeked', timestamp);
         }
         catch (error) {
             this.emit('error', error);
+            throw error;
         }
     }
     pause() {
+        if (this.isDestroyed)
+            return;
         this.videoStream?.pause();
         this.audioStream?.pause();
         this.udp.mediaConnection.setSpeaking(false);
     }
     resume() {
+        if (this.isDestroyed)
+            return;
         this.videoStream?.resume();
         this.audioStream?.resume();
         this.udp.mediaConnection.setSpeaking(true);
     }
     stop() {
-        this.videoStream?.destroy();
-        this.audioStream?.destroy();
-        this.stopStreamFn();
+        if (this.isDestroyed)
+            return;
+        this.isDestroyed = true;
+        this.cleanupStreams();
+        this.currentCommand?.kill('SIGKILL');
+        this.currentOutput?.destroy();
+        this.streamer.stopStream();
         this.udp.mediaConnection.setSpeaking(false);
         this.udp.mediaConnection.setVideoStatus(false);
         this.emit('stopped');
@@ -284,7 +348,7 @@ export async function playStream(input, streamer, options = {}) {
     udp.mediaConnection.setSpeaking(true);
     udp.mediaConnection.setVideoStatus(true);
     // Create controller and streams
-    const controller = new StreamController(demuxResult, udp, stopStream);
+    const controller = new StreamController(streamer, udp, input, options);
     const vStream = new VideoStream(udp);
     demuxResult.video.stream.pipe(vStream);
     if (demuxResult.audio) {

@@ -59,14 +59,21 @@ export declare function prepareStream(input: string | Readable, options?: Partia
     output: PassThrough;
 };
 export declare class StreamController extends EventEmitter {
-    private demuxer;
-    videoStream?: VideoStream;
-    audioStream?: AudioStream;
+    private currentCommand?;
+    private currentOutput?;
+    private videoStream?;
+    private audioStream?;
     private udp;
-    private stopStreamFn;
-    constructor(demuxer: any, udp: MediaUdp, stopStreamFn: () => void);
+    private streamer;
+    private inputSource;
+    private options;
+    private isDestroyed;
+    constructor(streamer: Streamer, udp: MediaUdp, inputSource: string | Readable, options: any);
+    private startNewStream;
+    private setupStreams;
     setStreams(videoStream: VideoStream, audioStream?: AudioStream): void;
-    seek(time: number): Promise<void>;
+    private cleanupStreams;
+    seek(timestamp: number): Promise<void>;
     pause(): void;
     resume(): void;
     stop(): void;
