@@ -284,6 +284,8 @@ export class StreamController extends EventEmitter {
     private seekTarget: number = 0;
     private isSeekInProgress: boolean = false;
     private nextSeekTarget?: number;
+    private isMuted: boolean = false;
+    private originalVolume?: number;
 
     // Position tracking
     private startPts?: number;
@@ -465,6 +467,60 @@ export class StreamController extends EventEmitter {
         this.isSeekInProgress = false;
     }
 
+    mute() {
+        if (this.isDestroyed || this.isMuted) return;
+
+        this.isMuted = true;
+
+        if (this.currentCommand) {
+            // Store current volume if needed later
+            this.originalVolume = this.options.bitrateAudio;
+
+            // Set volume to 0 in ffmpeg
+            this.currentCommand.audioFilters(`volume=0`);
+        }
+
+        // Pause audio stream if exists
+        if (this.audioStream) {
+            this.audioStream.pause();
+        }
+
+        this.udp.mediaConnection.setSpeaking(false);
+        this.emit('muted');
+    }
+
+    unmute() {
+        if (this.isDestroyed || !this.isMuted) return;
+
+        this.isMuted = false;
+
+        if (this.currentCommand) {
+            // Restore original volume if it was stored
+            if (this.originalVolume) {
+                this.currentCommand.audioFilters(`volume=1`);
+            }
+        }
+
+        // Resume audio stream if exists
+        if (this.audioStream) {
+            this.audioStream.resume();
+        }
+
+        this.udp.mediaConnection.setSpeaking(true);
+        this.emit('unmuted');
+    }
+
+    toggleMute() {
+        if (this.isMuted) {
+            this.unmute();
+        } else {
+            this.mute();
+        }
+    }
+
+    isMutedState(): boolean {
+        return this.isMuted;
+    }
 
     async seek(timestamp: number) {
         if (this.isDestroyed) return;

@@ -71,6 +71,8 @@ export declare class StreamController extends EventEmitter {
     private seekTarget;
     private isSeekInProgress;
     private nextSeekTarget?;
+    private isMuted;
+    private originalVolume?;
     private startPts?;
     private lastPts;
     private startTime?;
@@ -85,6 +87,10 @@ export declare class StreamController extends EventEmitter {
     private cleanupCurrentPlayback;
     private startNewStream;
     private setupStreams;
+    mute(): void;
+    unmute(): void;
+    toggleMute(): void;
+    isMutedState(): boolean;
     seek(timestamp: number): Promise<void>;
     getCurrentPosition(): number;
     seekRelative(seconds: number): Promise<void>;
