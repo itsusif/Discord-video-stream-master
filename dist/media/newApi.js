@@ -267,26 +267,27 @@ export class StreamController extends EventEmitter {
     async startNewStream(seekTime) {
         // Create new ffmpeg command with seek if specified
         const ffmpegOptions = {
-            ...this.options,
-            ...(seekTime !== undefined && {
-                seekInput: seekTime,
-                minimizeLatency: true,
-            })
+            ...this.options
         };
-        const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
-        command.seek(seekTime);
-        command.on('error', (err) => {
-            if (!err.message.includes('SIGKILL')) {
-                this.emit('error', err);
-            }
-        });
-        this.currentCommand = command;
-        this.currentOutput = output;
-        const { video, audio } = await demux(output);
-        if (!video)
-            throw new Error("No video stream found");
-        await this.setupStreams(video, audio);
-        return { video, audio };
+        try {
+            const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
+            command.seek(seekTime);
+            command.on('error', (err) => {
+                if (!err.message.includes('SIGKILL')) {
+                    this.emit('error', err);
+                }
+            });
+            this.currentCommand = command;
+            this.currentOutput = output;
+            const { video, audio } = await demux(output);
+            if (!video)
+                throw new Error("No video stream found");
+            await this.setupStreams(video, audio);
+            return { video, audio };
+        }
+        catch (err) {
+            console.log(err);
+        }
     }
     setupStreams(video, audio) {
         const vStream = new VideoStream(this.udp, false);
