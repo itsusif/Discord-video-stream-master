@@ -260,8 +260,9 @@ export class StreamController extends EventEmitter {
     }
     setupPtsTracking(vStream) {
         const ptsHandler = () => {
-            if (!this.isSeekInProgress && vStream.pts !== undefined) {
-                this.seekTarget = vStream.pts;
+            if (!this.isSeekInProgress && vStream._currentTime !== undefined) {
+                console.log(`Current Time: ${vStream._currentTime}`);
+                this.seekTarget = vStream._currentTime;
                 // Once we get a valid PTS during seek, we can consider the seek complete
                 if (Math.abs(this.seekTarget - this.nextSeekTarget) < 1000) {
                     this.isSeekInProgress = false;

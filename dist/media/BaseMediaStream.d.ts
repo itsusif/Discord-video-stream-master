@@ -14,7 +14,7 @@ export declare class BaseMediaStream extends Writable {
     private _firstPts?;
     private _isBackwardSeek;
     private _packetBuffer;
-    private _currentTime;
+    _currentTime: number;
     private _noSleep;
     private _startTime?;
     private _startPts?;

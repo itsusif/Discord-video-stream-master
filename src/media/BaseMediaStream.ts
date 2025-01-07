@@ -19,7 +19,7 @@ export class BaseMediaStream extends Writable {
     private _firstPts?: number;
     private _isBackwardSeek: boolean = false;
     private _packetBuffer: Packet[] = [];
-    private _currentTime: number = 0;
+    public _currentTime: number = 0;
 
     private _noSleep: boolean;
     private _startTime?: number;
