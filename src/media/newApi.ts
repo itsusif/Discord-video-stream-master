@@ -436,6 +436,8 @@ export class StreamController extends EventEmitter {
         } else {
             this.setStreams(vStream);
         }
+         // Set up PTS tracking
+         this.setupPtsTracking(vStream);
     }
 
     async seek(timestamp: number) {
@@ -462,6 +464,7 @@ export class StreamController extends EventEmitter {
 
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
+            this.isSeekInProgress = false;
         } catch (error) {
             this.isSeekInProgress = false;
             this.emit('error', error);
