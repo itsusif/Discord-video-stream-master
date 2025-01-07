@@ -281,6 +281,11 @@ export class StreamController extends EventEmitter {
     private inputSource: string;
     private options: any;
     private isDestroyed: boolean = false;
+    private currentPosition: number = 0;
+    private startTime?: number;
+    private isPaused: boolean = false;
+    private totalPausedTime: number = 0;
+    private lastPauseTime?: number;
 
     constructor(
         streamer: Streamer,
@@ -293,6 +298,17 @@ export class StreamController extends EventEmitter {
         this.udp = udp;
         this.inputSource = inputSource;
         this.options = options;
+    }
+
+    getCurrentPosition(): number {
+        if (!this.startTime) return 0;
+        if (this.isPaused) {
+            return this.currentPosition;
+        }
+
+        const now = Date.now();
+        const elapsed = now - this.startTime - this.totalPausedTime;
+        return elapsed;
     }
 
     private async startNewStream(seekTime?: number) {
@@ -379,13 +395,19 @@ export class StreamController extends EventEmitter {
 
     async seek(timestamp: number) {
         if (this.isDestroyed) return;
-        
+
         try {
             this.emit('seeking', timestamp);
 
+            // Update current position
+            this.currentPosition = timestamp;
+            this.startTime = Date.now();
+            this.totalPausedTime = 0;
+            this.lastPauseTime = undefined;
+
             // Pause current playback
             this.udp.mediaConnection.setSpeaking(false);
-            
+
             // Clean up existing streams
             this.cleanupStreams();
             this.currentCommand?.kill('SIGKILL');
@@ -396,7 +418,7 @@ export class StreamController extends EventEmitter {
 
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
-            
+
             this.emit('seeked', timestamp);
         } catch (error) {
             this.emit('error', error);
@@ -405,14 +427,22 @@ export class StreamController extends EventEmitter {
     }
 
     pause() {
-        if (this.isDestroyed) return;
+        if (this.isDestroyed || this.isPaused) return;
+        this.isPaused = true;
+        this.lastPauseTime = Date.now();
+        this.currentPosition = this.getCurrentPosition();
         this.videoStream?.pause();
         this.audioStream?.pause();
         this.udp.mediaConnection.setSpeaking(false);
     }
 
     resume() {
-        if (this.isDestroyed) return;
+        if (this.isDestroyed || !this.isPaused) return;
+        this.isPaused = false;
+        if (this.lastPauseTime) {
+            this.totalPausedTime += Date.now() - this.lastPauseTime;
+            this.lastPauseTime = undefined;
+        }
         this.videoStream?.resume();
         this.audioStream?.resume();
         this.udp.mediaConnection.setSpeaking(true);
@@ -425,11 +455,11 @@ export class StreamController extends EventEmitter {
         this.cleanupStreams();
         this.currentCommand?.kill('SIGKILL');
         this.currentOutput?.destroy();
-        
+
         this.streamer.stopStream();
         this.udp.mediaConnection.setSpeaking(false);
         this.udp.mediaConnection.setVideoStatus(false);
-        
+
         this.emit('stopped');
     }
 }

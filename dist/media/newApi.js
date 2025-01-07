@@ -156,10 +156,23 @@ export class StreamController extends EventEmitter {
     constructor(streamer, udp, inputSource, options) {
         super();
         this.isDestroyed = false;
+        this.currentPosition = 0;
+        this.isPaused = false;
+        this.totalPausedTime = 0;
         this.streamer = streamer;
         this.udp = udp;
         this.inputSource = inputSource;
         this.options = options;
+    }
+    getCurrentPosition() {
+        if (!this.startTime)
+            return 0;
+        if (this.isPaused) {
+            return this.currentPosition;
+        }
+        const now = Date.now();
+        const elapsed = now - this.startTime - this.totalPausedTime;
+        return elapsed;
     }
     async startNewStream(seekTime) {
         // Create new ffmpeg command with seek if specified
@@ -238,6 +251,11 @@ export class StreamController extends EventEmitter {
             return;
         try {
             this.emit('seeking', timestamp);
+            // Update current position
+            this.currentPosition = timestamp;
+            this.startTime = Date.now();
+            this.totalPausedTime = 0;
+            this.lastPauseTime = undefined;
             // Pause current playback
             this.udp.mediaConnection.setSpeaking(false);
             // Clean up existing streams
@@ -256,15 +274,23 @@ export class StreamController extends EventEmitter {
         }
     }
     pause() {
-        if (this.isDestroyed)
+        if (this.isDestroyed || this.isPaused)
             return;
+        this.isPaused = true;
+        this.lastPauseTime = Date.now();
+        this.currentPosition = this.getCurrentPosition();
         this.videoStream?.pause();
         this.audioStream?.pause();
         this.udp.mediaConnection.setSpeaking(false);
     }
     resume() {
-        if (this.isDestroyed)
+        if (this.isDestroyed || !this.isPaused)
             return;
+        this.isPaused = false;
+        if (this.lastPauseTime) {
+            this.totalPausedTime += Date.now() - this.lastPauseTime;
+            this.lastPauseTime = undefined;
+        }
         this.videoStream?.resume();
         this.audioStream?.resume();
         this.udp.mediaConnection.setSpeaking(true);

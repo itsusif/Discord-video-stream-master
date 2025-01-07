@@ -68,7 +68,13 @@ export declare class StreamController extends EventEmitter {
     private inputSource;
     private options;
     private isDestroyed;
+    private currentPosition;
+    private startTime?;
+    private isPaused;
+    private totalPausedTime;
+    private lastPauseTime?;
     constructor(streamer: Streamer, udp: MediaUdp, inputSource: string, options: any);
+    getCurrentPosition(): number;
     private startNewStream;
     private setupStreams;
     setStreams(videoStream: VideoStream, audioStream?: AudioStream): void;
