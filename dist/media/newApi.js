@@ -260,7 +260,7 @@ export class StreamController extends EventEmitter {
     }
     setupPtsTracking(vStream) {
         const ptsHandler = () => {
-            if (this.isSeekInProgress && vStream.pts !== undefined) {
+            if (!this.isSeekInProgress && vStream.pts !== undefined) {
                 this.seekTarget = vStream.pts;
                 // Once we get a valid PTS during seek, we can consider the seek complete
                 if (Math.abs(this.seekTarget - this.nextSeekTarget) < 1000) {
