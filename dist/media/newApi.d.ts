@@ -73,8 +73,11 @@ export declare class StreamController extends EventEmitter {
     private isPaused;
     private totalPausedTime;
     private lastPauseTime?;
+    private isSeekInProgress;
+    private nextSeekTarget?;
     constructor(streamer: Streamer, udp: MediaUdp, inputSource: string, options: any);
     getCurrentPosition(): number;
+    private cleanupCurrentPlayback;
     private startNewStream;
     private setupStreams;
     setStreams(videoStream: VideoStream, audioStream?: AudioStream): void;
@@ -82,7 +85,7 @@ export declare class StreamController extends EventEmitter {
     seek(timestamp: number): Promise<void>;
     pause(): void;
     resume(): void;
-    stop(): void;
+    stop(): Promise<void>;
 }
 export type PlayStreamOptions = {
     /**

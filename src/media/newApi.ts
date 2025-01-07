@@ -286,6 +286,8 @@ export class StreamController extends EventEmitter {
     private isPaused: boolean = false;
     private totalPausedTime: number = 0;
     private lastPauseTime?: number;
+    private isSeekInProgress: boolean = false;
+    private nextSeekTarget?: number;
 
     constructor(
         streamer: Streamer,
@@ -298,6 +300,7 @@ export class StreamController extends EventEmitter {
         this.udp = udp;
         this.inputSource = inputSource;
         this.options = options;
+        this.startTime = Date.now();
     }
 
     getCurrentPosition(): number {
@@ -311,20 +314,63 @@ export class StreamController extends EventEmitter {
         return elapsed;
     }
 
+    private async cleanupCurrentPlayback() {
+        try {
+            // Cleanup streams first
+            if (this.videoStream) {
+                this.videoStream.removeAllListeners();
+                this.videoStream.destroy();
+                this.videoStream = undefined;
+            }
+            if (this.audioStream) {
+                this.audioStream.removeAllListeners();
+                this.audioStream.destroy();
+                this.audioStream = undefined;
+            }
+
+            // Cleanup command and output
+            if (this.currentCommand) {
+                await new Promise<void>((resolve) => {
+                    this.currentCommand?.on('end', () => resolve());
+                    this.currentCommand?.on('error', () => resolve());
+                    this.currentCommand?.kill('SIGKILL');
+                });
+                this.currentCommand = undefined;
+            }
+
+            if (this.currentOutput) {
+                this.currentOutput.destroy();
+                this.currentOutput = undefined;
+            }
+
+            // Small delay to ensure cleanup is complete
+            await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (error) {
+            console.error('Cleanup error:', error);
+        }
+    }
+
     private async startNewStream(seekTime?: number) {
         // Create new ffmpeg command with seek if specified
         const ffmpegOptions = {
             ...this.options,
             ...(seekTime !== undefined && {
                 seekInput: seekTime,
-                minimizeLatency: true,  // Reduce latency for seeks
+                minimizeLatency: true,
             })
         };
 
         const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
+        command.seek(seekTime);
+        // Set up error handling for the command
+        command.on('error', (err: Error) => {
+            if (!err.message.includes('SIGKILL')) {
+                this.emit('error', err);
+            }
+        });
+
         this.currentCommand = command;
         this.currentOutput = output;
-        command.seek(seekTime);
 
         // Setup new streams
         const { video, audio } = await demux(output);
@@ -396,25 +442,28 @@ export class StreamController extends EventEmitter {
     async seek(timestamp: number) {
         if (this.isDestroyed) return;
 
+        // If a seek is in progress, store this as the next target
+        if (this.isSeekInProgress) {
+            this.nextSeekTarget = timestamp;
+            return;
+        }
+
         try {
+            this.isSeekInProgress = true;
             this.emit('seeking', timestamp);
 
-            // Update current position
+            // Update position tracking
             this.currentPosition = timestamp;
             this.startTime = Date.now();
             this.totalPausedTime = 0;
             this.lastPauseTime = undefined;
 
-            // Pause current playback
+            // Pause playback and cleanup
             this.udp.mediaConnection.setSpeaking(false);
+            await this.cleanupCurrentPlayback();
 
-            // Clean up existing streams
-            this.cleanupStreams();
-            this.currentCommand?.kill('SIGKILL');
-            this.currentOutput?.destroy();
-
-            // Start new stream with seek
-            await this.startNewStream(timestamp / 1000); // Convert to seconds
+            // Start new stream
+            await this.startNewStream(timestamp / 1000);
 
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
@@ -423,6 +472,15 @@ export class StreamController extends EventEmitter {
         } catch (error) {
             this.emit('error', error);
             throw error;
+        } finally {
+            this.isSeekInProgress = false;
+
+            // Check if there's another seek waiting
+            if (this.nextSeekTarget !== undefined) {
+                const nextTarget = this.nextSeekTarget;
+                this.nextSeekTarget = undefined;
+                await this.seek(nextTarget);
+            }
         }
     }
 
@@ -448,13 +506,11 @@ export class StreamController extends EventEmitter {
         this.udp.mediaConnection.setSpeaking(true);
     }
 
-    stop() {
+    async stop() {
         if (this.isDestroyed) return;
         this.isDestroyed = true;
 
-        this.cleanupStreams();
-        this.currentCommand?.kill('SIGKILL');
-        this.currentOutput?.destroy();
+        await this.cleanupCurrentPlayback();
 
         this.streamer.stopStream();
         this.udp.mediaConnection.setSpeaking(false);
