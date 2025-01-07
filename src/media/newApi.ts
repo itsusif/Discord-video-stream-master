@@ -298,6 +298,18 @@ export class StreamController extends EventEmitter {
         this.options = options;
     }
 
+
+    private cleanupStreams() {
+        if (this.videoStream) {
+            this.videoStream.removeAllListeners();
+            this.videoStream.destroy();
+        }
+        if (this.audioStream) {
+            this.audioStream.removeAllListeners();
+            this.audioStream.destroy();
+        }
+    }
+
     setStreams(videoStream: VideoStream, audioStream?: AudioStream) {
         // Clean up old streams
         this.cleanupStreams();
@@ -493,7 +505,6 @@ export class StreamController extends EventEmitter {
         this.emit('stopped');
     }
 }
-
 export type PlayStreamOptions = {
     /**
      * Set stream type as "Go Live" or camera stream
