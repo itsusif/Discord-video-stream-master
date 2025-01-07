@@ -3,6 +3,7 @@ import { setTimeout } from "node:timers/promises";
 import { Writable } from "node:stream";
 import { combineLoHi } from "./utils.js";
 import type { Packet } from "@libav.js/variant-webcodecs";
+import { EventEmitter } from "node:events";
 
 export class BaseMediaStream extends Writable {
     private _pts?: number;
@@ -13,14 +14,13 @@ export class BaseMediaStream extends Writable {
     private _isPaused: boolean = false;
     private _pauseStartTime?: number;
     private _totalPausedTime: number = 0;
-    private _seekTime?: number;
-    private _seekTargetPts?: number;
+    private _seekTarget?: number;
+    private _emitter: EventEmitter;
+    private _firstPts?: number;
 
     private _noSleep: boolean;
     private _startTime?: number;
     private _startPts?: number;
-    private _baseTime?: number;
-    private _currentPacket?: Packet;
 
     public syncStream?: BaseMediaStream;
     
@@ -30,6 +30,7 @@ export class BaseMediaStream extends Writable {
         this._loggerSync = new Log(`stream:${type}:sync`);
         this._loggerSleep = new Log(`stream:${type}:sleep`);
         this._noSleep = noSleep;
+        this._emitter = new EventEmitter();
     }
 
     get pts(): number | undefined {
@@ -72,35 +73,45 @@ export class BaseMediaStream extends Writable {
         throw new Error("Not implemented");
     }
 
-    private _shouldDropFrame(framePts: number): boolean {
-        if (!this._seekTargetPts) return false;
-        return framePts < this._seekTargetPts;
+    private _checkSeek(pts: number): boolean {
+        if (this._seekTarget === undefined) return false;
+        
+        // Store first PTS value for relative seeking
+        if (this._firstPts === undefined) {
+            this._firstPts = pts;
+        }
+        
+        // Convert relative PTS to absolute
+        const absolutePts = pts - (this._firstPts ?? 0);
+        
+        if (absolutePts >= this._seekTarget) {
+            this._seekTarget = undefined;
+            this._startTime = undefined;
+            this._startPts = undefined;
+            this.resetPauseState();
+            this._emitter.emit('seeked', absolutePts);
+            return false;
+        }
+        
+        return true;
     }
 
     async _write(frame: Packet, _: BufferEncoding, callback: (error?: Error | null) => void) {
-        this._currentPacket = frame;
         const { data, ptshi, pts, durationhi, duration, time_base_num, time_base_den } = frame;
         
         // Calculate PTS in milliseconds
         const framePts = combineLoHi(ptshi!, pts!) / time_base_den! * time_base_num! * 1000;
-        const frametime = combineLoHi(durationhi!, duration!) / time_base_den! * time_base_num! * 1000;
-
+        
         // Handle seeking
-        if (this._shouldDropFrame(framePts)) {
+        if (this._checkSeek(framePts)) {
             callback(null);
             return;
         }
 
-        // Initialize timing on first non-dropped frame
-        if (this._startTime === undefined || this._seekTime !== undefined) {
+        // Initialize on first frame or after seek
+        if (this._startTime === undefined) {
             this._startTime = performance.now();
             this._startPts = framePts;
-            this._baseTime = this._startTime;
-            if (this._seekTime !== undefined) {
-                this._baseTime -= this._seekTime;
-                this._seekTime = undefined;
-                this._seekTargetPts = undefined;
-            }
         }
 
         // Handle pause
@@ -110,10 +121,12 @@ export class BaseMediaStream extends Writable {
 
         await this._waitForOtherStream();
 
+        const frametime = combineLoHi(durationhi!, duration!) / time_base_den! * time_base_num! * 1000;
         const start = performance.now();
-        await this._sendFrame(Buffer.from(data), frametime);
-        const end = performance.now();
         
+        await this._sendFrame(Buffer.from(data), frametime);
+        
+        const end = performance.now();
         this._pts = framePts;
 
         const sendTime = end - start;
@@ -137,8 +150,7 @@ export class BaseMediaStream extends Writable {
 
         const now = performance.now();
         const adjustedNow = now - this._totalPausedTime;
-        const adjustedBase = this._baseTime ?? this._startTime ?? now;
-        const sleep = Math.max(0, this._pts - (this._startPts ?? 0) - (adjustedNow - adjustedBase));
+        const sleep = Math.max(0, this._pts - (this._startPts ?? 0) - (adjustedNow - this._startTime!));
         
         this._loggerSleep.debug(`Sleeping for ${sleep}ms`);
         
@@ -152,6 +164,7 @@ export class BaseMediaStream extends Writable {
     _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
         super._destroy(error, callback);
         this.syncStream = undefined;
+        this._emitter.removeAllListeners();
     }
 
     pause(): this {
@@ -175,24 +188,23 @@ export class BaseMediaStream extends Writable {
         return this;
     }
 
-    /**
-     * Seek to a specific timestamp in milliseconds
-     * @param targetMs Target timestamp in milliseconds
-     */
     seek(targetMs: number): this {
         if (targetMs < 0) return this;
-
+        
         this._loggerSend.debug(`Seeking to ${targetMs}ms`);
+        this._emitter.emit('seeking', targetMs);
+        this._seekTarget = targetMs;
+        
+        return this;
+    }
 
-        this._seekTime = targetMs;
-        this._seekTargetPts = targetMs;
-        this._startTime = undefined;
-        this._startPts = undefined;
-        this._baseTime = undefined;
-        
-        // Reset pause state when seeking
-        this.resetPauseState();
-        
+    onn(event: 'seeking' | 'seeked', listener: (timestamp: number) => void): this {
+        this._emitter.on(event, listener);
+        return this;
+    }
+
+    off(event: 'seeking' | 'seeked', listener: (timestamp: number) => void): this {
+        this._emitter.off(event, listener);
         return this;
     }
 
@@ -200,9 +212,5 @@ export class BaseMediaStream extends Writable {
         this._isPaused = false;
         this._pauseStartTime = undefined;
         this._totalPausedTime = 0;
-    }
-
-    getCurrentPacket(): Packet | undefined {
-        return this._currentPacket;
     }
 }
