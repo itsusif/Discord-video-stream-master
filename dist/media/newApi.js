@@ -289,7 +289,7 @@ export class StreamController extends EventEmitter {
             console.log('Starting new stream');
             const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
             console.log('Stream started');
-            command.seek(seekTime);
+            // command.seek(seekTime);
             console.log('Seeked to:', seekTime);
             command.on('error', (err) => {
                 console.log(err, 'err');
