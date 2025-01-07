@@ -97,7 +97,6 @@ export class BaseMediaStream extends Writable {
     }
     async _write(frame, _, callback) {
         try {
-            this.emit('pts', this._pts);
             // Handle buffered packets from backward seek
             if (this._packetBuffer.length > 0 && !this._isBackwardSeek) {
                 const packet = this._packetBuffer.shift();
@@ -126,6 +125,7 @@ export class BaseMediaStream extends Writable {
             await setTimeout(50);
         }
         await this._waitForOtherStream();
+        this.emit('pts', this._pts);
         const frametime = combineLoHi(durationhi, duration) / time_base_den * time_base_num * 1000;
         const start = performance.now();
         await this._sendFrame(Buffer.from(data), frametime);

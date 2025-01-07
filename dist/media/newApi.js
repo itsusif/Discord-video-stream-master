@@ -178,6 +178,8 @@ export class StreamController extends EventEmitter {
         this.cleanupStreams();
         this.videoStream = videoStream;
         this.audioStream = audioStream;
+        // Set up PTS tracking
+        this.setupPtsTracking(videoStream);
         videoStream.on('finish', () => {
             if (!this.isDestroyed) {
                 this.emit('finished');
@@ -283,8 +285,6 @@ export class StreamController extends EventEmitter {
         else {
             this.setStreams(vStream);
         }
-        // Set up PTS tracking
-        this.setupPtsTracking(vStream);
     }
     async seek(timestamp) {
         if (this.isDestroyed)
