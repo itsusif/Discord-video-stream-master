@@ -285,6 +285,15 @@ export class StreamController extends EventEmitter {
     private isSeekInProgress: boolean = false;
     private nextSeekTarget?: number;
 
+    // Position tracking
+    private startPts?: number;
+    private lastPts: number = 0;
+    private startTime?: number;
+    private seekOffset: number = 0;
+    private isPaused: boolean = false;
+    private pauseStartTime?: number;
+    private totalPausedTime: number = 0;
+
     constructor(
         streamer: Streamer,
         udp: MediaUdp,
@@ -296,8 +305,38 @@ export class StreamController extends EventEmitter {
         this.udp = udp;
         this.inputSource = inputSource;
         this.options = options;
+        this.startTime = Date.now();
     }
 
+    private setupPtsTracking(vStream: VideoStream) {
+        const ptsHandler = () => {
+            if (vStream.pts === undefined) return;
+
+            // Initialize startPts if not set
+            if (this.startPts === undefined) {
+                this.startPts = vStream.pts;
+                this.startTime = Date.now();
+                this.lastPts = vStream.pts;
+                return;
+            }
+
+            // Update last known PTS
+            this.lastPts = vStream.pts;
+
+            if (this.isSeekInProgress) {
+                console.log(`Seeking to: ${this.nextSeekTarget}, Current: ${this.getCurrentPosition()}`);
+                if (Math.abs(this.getCurrentPosition() - (this.nextSeekTarget || 0)) < 1000) {
+                    this.isSeekInProgress = false;
+                    this.emit('seeked', this.getCurrentPosition());
+                }
+            }
+
+            // Emit position update event
+            this.emit('positionUpdate', this.getCurrentPosition());
+        };
+
+        vStream.on('pts', ptsHandler);
+    }
 
     private cleanupStreams() {
         if (this.videoStream) {
@@ -409,27 +448,10 @@ export class StreamController extends EventEmitter {
         return { video, audio };
     }
 
-    private setupPtsTracking(vStream: VideoStream) {
-        const ptsHandler = () => {
-            if (!this.isSeekInProgress && vStream._currentTime !== undefined) {
-                console.log(`Current Time: ${vStream._currentTime}`);
-                this.seekTarget = vStream._currentTime;
-                // Once we get a valid PTS during seek, we can consider the seek complete
-                if (Math.abs(this.seekTarget - this.nextSeekTarget!) < 1000) {
-                    this.isSeekInProgress = false;
-                    this.emit('seeked', this.seekTarget);
-                }
-            }
-        };
-
-        vStream.on('pts', ptsHandler);
-    }
-
-    private async setupStreams(video: { stream: Readable } & StreamInfo, audio?: { stream: Readable }) {
+    private setupStreams(video: { stream: Readable } & StreamInfo, audio?: { stream: Readable }) {
         const vStream = new VideoStream(this.udp, false);
         video.stream.pipe(vStream);
 
-        // Set up PTS tracking
         this.setupPtsTracking(vStream);
 
         if (audio) {
@@ -442,6 +464,7 @@ export class StreamController extends EventEmitter {
             this.setStreams(vStream);
         }
     }
+
 
     async seek(timestamp: number) {
         if (this.isDestroyed) return;
@@ -458,6 +481,12 @@ export class StreamController extends EventEmitter {
             this.nextSeekTarget = timestamp;
             this.emit('seeking', timestamp);
 
+            // Update seek offset
+            this.seekOffset = timestamp;
+            this.startPts = undefined;
+            this.startTime = undefined;
+            this.totalPausedTime = 0;
+
             // Pause playback and cleanup
             this.udp.mediaConnection.setSpeaking(false);
             await this.cleanupCurrentPlayback();
@@ -467,7 +496,6 @@ export class StreamController extends EventEmitter {
 
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
-            this.isSeekInProgress = false;
         } catch (error) {
             this.isSeekInProgress = false;
             this.emit('error', error);
@@ -475,9 +503,21 @@ export class StreamController extends EventEmitter {
         }
     }
 
-
     getCurrentPosition(): number {
-        return this.seekTarget;
+        if (!this.startTime || !this.startPts) {
+            return this.seekOffset;
+        }
+
+        if (this.isPaused) {
+            return this.lastPts - this.startPts + this.seekOffset;
+        }
+
+        const now = Date.now();
+        const pausedDuration = this.totalPausedTime + (this.pauseStartTime ? (now - this.pauseStartTime) : 0);
+        const elapsedTime = now - this.startTime - pausedDuration;
+        const ptsDelta = this.lastPts - this.startPts;
+
+        return Math.max(0, ptsDelta + this.seekOffset);
     }
 
     seekRelative(seconds: number) {
@@ -485,18 +525,26 @@ export class StreamController extends EventEmitter {
     }
 
     pause() {
-        if (this.isDestroyed) return;
+        if (this.isDestroyed || this.isPaused) return;
+        this.isPaused = true;
+        this.pauseStartTime = Date.now();
         this.videoStream?.pause();
         this.audioStream?.pause();
         this.udp.mediaConnection.setSpeaking(false);
     }
 
     resume() {
-        if (this.isDestroyed) return;
+        if (this.isDestroyed || !this.isPaused) return;
+        this.isPaused = false;
+        if (this.pauseStartTime) {
+            this.totalPausedTime += Date.now() - this.pauseStartTime;
+            this.pauseStartTime = undefined;
+        }
         this.videoStream?.resume();
         this.audioStream?.resume();
         this.udp.mediaConnection.setSpeaking(true);
     }
+
 
     async stop() {
         if (this.isDestroyed) return;
