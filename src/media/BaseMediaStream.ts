@@ -17,6 +17,9 @@ export class BaseMediaStream extends Writable {
     private _seekTarget?: number;
     private _emitter: EventEmitter;
     private _firstPts?: number;
+    private _isBackwardSeek: boolean = false;
+    private _packetBuffer: Packet[] = [];
+    private _currentTime: number = 0;
 
     private _noSleep: boolean;
     private _startTime?: number;
@@ -35,6 +38,10 @@ export class BaseMediaStream extends Writable {
 
     get pts(): number | undefined {
         return this._pts;
+    }
+
+    get currentTime(): number {
+        return this._currentTime;
     }
 
     get isPaused(): boolean {
@@ -73,48 +80,86 @@ export class BaseMediaStream extends Writable {
         throw new Error("Not implemented");
     }
 
-    private _checkSeek(pts: number): boolean {
+    private _ptsToMs(packet: Packet): number {
+        const { ptshi, pts, time_base_num, time_base_den } = packet;
+        return combineLoHi(ptshi!, pts!) / time_base_den! * time_base_num! * 1000;
+    }
+
+    private _handleSeek(packet: Packet): boolean {
         if (this._seekTarget === undefined) return false;
+
+        const framePts = this._ptsToMs(packet);
         
-        // Store first PTS value for relative seeking
+        // Initialize first PTS if not set
         if (this._firstPts === undefined) {
-            this._firstPts = pts;
+            this._firstPts = framePts;
         }
         
-        // Convert relative PTS to absolute
-        const absolutePts = pts - (this._firstPts ?? 0);
-        console.log(absolutePts, this._seekTarget);
-        if (absolutePts >= this._seekTarget) {
-            this._seekTarget = undefined;
-            this._startTime = undefined;
-            this._startPts = undefined;
-            this.resetPauseState();
-            this._emitter.emit('seeked', absolutePts);
+        // Calculate absolute time position
+        const absoluteTime = framePts - (this._firstPts ?? 0);
+        this._currentTime = absoluteTime;
+
+        // Handle backward seek
+        if (this._isBackwardSeek) {
+            // Store packet if we haven't reached target yet
+            if (absoluteTime > this._seekTarget) {
+                this._packetBuffer.push(packet);
+                return true;
+            }
+            // Found our target point, sort and prepare buffered packets
+            this._isBackwardSeek = false;
+            this._packetBuffer.sort((a, b) => this._ptsToMs(a) - this._ptsToMs(b));
+            this._resetStreamState();
             return false;
         }
-        
-        return true;
+
+        // Handle forward seek
+        if (absoluteTime < this._seekTarget) {
+            return true;
+        }
+
+        this._seekTarget = undefined;
+        this._resetStreamState();
+        this._emitter.emit('seeked', absoluteTime);
+        return false;
+    }
+
+    private _resetStreamState(): void {
+        this._startTime = undefined;
+        this._startPts = undefined;
+        this.resetPauseState();
     }
 
     async _write(frame: Packet, _: BufferEncoding, callback: (error?: Error | null) => void) {
-        const { data, ptshi, pts, durationhi, duration, time_base_num, time_base_den } = frame;
-        
-        // Calculate PTS in milliseconds
-        const framePts = combineLoHi(ptshi!, pts!) / time_base_den! * time_base_num! * 1000;
-        
-        // Handle seeking
-        if (this._checkSeek(framePts)) {
-            callback(null);
-            return;
-        }
+        try {
+            // Handle buffered packets from backward seek
+            if (this._packetBuffer.length > 0 && !this._isBackwardSeek) {
+                const packet = this._packetBuffer.shift();
+                if (packet) {
+                    await this._processPacket(packet);
+                }
+            }
 
-        // Initialize on first frame or after seek
+            // Process current frame if not seeking backward or if at target
+            if (!this._handleSeek(frame)) {
+                await this._processPacket(frame);
+            }
+
+            callback(null);
+        } catch (error) {
+            callback(error as Error);
+        }
+    }
+
+    private async _processPacket(packet: Packet): Promise<void> {
+        const { data, durationhi, duration, time_base_num, time_base_den } = packet;
+        const framePts = this._ptsToMs(packet);
+
         if (this._startTime === undefined) {
             this._startTime = performance.now();
             this._startPts = framePts;
         }
 
-        // Handle pause
         while (this._isPaused) {
             await setTimeout(50);
         }
@@ -128,12 +173,16 @@ export class BaseMediaStream extends Writable {
         
         const end = performance.now();
         this._pts = framePts;
+        this._currentTime = framePts - (this._firstPts ?? 0);
 
         const sendTime = end - start;
         const ratio = sendTime / frametime;
+
+        // Logging...
         this._loggerSend.debug({
             stats: {
                 pts: this._pts,
+                currentTime: this._currentTime,
                 frame_size: data.length,
                 duration: sendTime,
                 frametime
@@ -155,16 +204,17 @@ export class BaseMediaStream extends Writable {
         this._loggerSleep.debug(`Sleeping for ${sleep}ms`);
         
         if (this._noSleep) {
-            callback(null);
-        } else {
-            setTimeout(sleep).then(() => callback(null));
+            return;
         }
+        
+        await setTimeout(sleep);
     }
 
     _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
         super._destroy(error, callback);
         this.syncStream = undefined;
         this._emitter.removeAllListeners();
+        this._packetBuffer = [];
     }
 
     pause(): this {
@@ -193,7 +243,19 @@ export class BaseMediaStream extends Writable {
         
         this._loggerSend.debug(`Seeking to ${targetMs}ms`);
         this._emitter.emit('seeking', targetMs);
+        
+        // Determine seek direction
+        this._isBackwardSeek = targetMs < this._currentTime;
         this._seekTarget = targetMs;
+        
+        // Clear packet buffer on new seek
+        this._packetBuffer = [];
+        
+        if (this._isBackwardSeek) {
+            this._loggerSend.debug('Performing backward seek');
+        } else {
+            this._loggerSend.debug('Performing forward seek');
+        }
         
         return this;
     }
