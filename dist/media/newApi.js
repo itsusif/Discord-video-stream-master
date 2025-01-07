@@ -156,25 +156,38 @@ export class StreamController extends EventEmitter {
     constructor(streamer, udp, inputSource, options) {
         super();
         this.isDestroyed = false;
-        this.currentPosition = 0;
-        this.isPaused = false;
-        this.totalPausedTime = 0;
+        this.seekTarget = 0;
         this.isSeekInProgress = false;
         this.streamer = streamer;
         this.udp = udp;
         this.inputSource = inputSource;
         this.options = options;
-        this.startTime = Date.now();
     }
-    getCurrentPosition() {
-        if (!this.startTime)
-            return 0;
-        if (this.isPaused) {
-            return this.currentPosition;
+    setStreams(videoStream, audioStream) {
+        // Clean up old streams
+        this.cleanupStreams();
+        this.videoStream = videoStream;
+        this.audioStream = audioStream;
+        videoStream.on('finish', () => {
+            if (!this.isDestroyed) {
+                this.emit('finished');
+                this.stop();
+            }
+        });
+        videoStream.on('error', (error) => {
+            if (!this.isDestroyed) {
+                this.emit('error', error);
+                this.stop();
+            }
+        });
+        if (audioStream) {
+            audioStream.on('error', (error) => {
+                if (!this.isDestroyed) {
+                    this.emit('error', error);
+                    this.stop();
+                }
+            });
         }
-        const now = Date.now();
-        const elapsed = now - this.startTime - this.totalPausedTime;
-        return elapsed;
     }
     async cleanupCurrentPlayback() {
         try {
@@ -219,8 +232,6 @@ export class StreamController extends EventEmitter {
             })
         };
         const { command, output } = prepareStream(this.inputSource, ffmpegOptions);
-        command.seek(seekTime);
-        // Set up error handling for the command
         command.on('error', (err) => {
             if (!err.message.includes('SIGKILL')) {
                 this.emit('error', err);
@@ -228,18 +239,30 @@ export class StreamController extends EventEmitter {
         });
         this.currentCommand = command;
         this.currentOutput = output;
-        // Setup new streams
         const { video, audio } = await demux(output);
         if (!video)
             throw new Error("No video stream found");
         await this.setupStreams(video, audio);
         return { video, audio };
     }
+    setupPtsTracking(vStream) {
+        const ptsHandler = () => {
+            if (this.isSeekInProgress && vStream.pts !== undefined) {
+                this.seekTarget = vStream.pts;
+                // Once we get a valid PTS during seek, we can consider the seek complete
+                if (Math.abs(this.seekTarget - this.nextSeekTarget) < 1000) {
+                    this.isSeekInProgress = false;
+                    this.emit('seeked', this.seekTarget);
+                }
+            }
+        };
+        vStream.on('pts', ptsHandler);
+    }
     async setupStreams(video, audio) {
-        // Create new video stream
-        const vStream = new VideoStream(this.udp, false); // noSleep = false for better sync
+        const vStream = new VideoStream(this.udp, false);
         video.stream.pipe(vStream);
-        // Create new audio stream if available
+        // Set up PTS tracking
+        this.setupPtsTracking(vStream);
         if (audio) {
             const aStream = new AudioStream(this.udp, false);
             audio.stream.pipe(aStream);
@@ -251,99 +274,48 @@ export class StreamController extends EventEmitter {
             this.setStreams(vStream);
         }
     }
-    setStreams(videoStream, audioStream) {
-        // Clean up old streams
-        this.cleanupStreams();
-        this.videoStream = videoStream;
-        this.audioStream = audioStream;
-        videoStream.on('finish', () => {
-            if (!this.isDestroyed) {
-                this.emit('finished');
-                this.stop();
-            }
-        });
-        videoStream.on('error', (error) => {
-            if (!this.isDestroyed) {
-                this.emit('error', error);
-                this.stop();
-            }
-        });
-        if (audioStream) {
-            audioStream.on('error', (error) => {
-                if (!this.isDestroyed) {
-                    this.emit('error', error);
-                    this.stop();
-                }
-            });
-        }
-    }
-    cleanupStreams() {
-        if (this.videoStream) {
-            this.videoStream.removeAllListeners();
-            this.videoStream.destroy();
-        }
-        if (this.audioStream) {
-            this.audioStream.removeAllListeners();
-            this.audioStream.destroy();
-        }
-    }
     async seek(timestamp) {
         if (this.isDestroyed)
             return;
-        // If a seek is in progress, store this as the next target
+        timestamp = Math.max(0, timestamp);
         if (this.isSeekInProgress) {
             this.nextSeekTarget = timestamp;
             return;
         }
         try {
             this.isSeekInProgress = true;
+            this.nextSeekTarget = timestamp;
             this.emit('seeking', timestamp);
-            // Update position tracking
-            this.currentPosition = timestamp;
-            this.startTime = Date.now();
-            this.totalPausedTime = 0;
-            this.lastPauseTime = undefined;
             // Pause playback and cleanup
             this.udp.mediaConnection.setSpeaking(false);
             await this.cleanupCurrentPlayback();
-            // Start new stream
+            // Start new stream with seek
             await this.startNewStream(timestamp / 1000);
             // Resume playback
             this.udp.mediaConnection.setSpeaking(true);
-            this.emit('seeked', timestamp);
         }
         catch (error) {
+            this.isSeekInProgress = false;
             this.emit('error', error);
             throw error;
         }
-        finally {
-            this.isSeekInProgress = false;
-            // Check if there's another seek waiting
-            if (this.nextSeekTarget !== undefined) {
-                const nextTarget = this.nextSeekTarget;
-                this.nextSeekTarget = undefined;
-                await this.seek(nextTarget);
-            }
-        }
+    }
+    getCurrentPosition() {
+        return this.seekTarget;
+    }
+    seekRelative(seconds) {
+        return this.seek(this.getCurrentPosition() + (seconds * 1000));
     }
     pause() {
-        if (this.isDestroyed || this.isPaused)
+        if (this.isDestroyed)
             return;
-        this.isPaused = true;
-        this.lastPauseTime = Date.now();
-        this.currentPosition = this.getCurrentPosition();
         this.videoStream?.pause();
         this.audioStream?.pause();
         this.udp.mediaConnection.setSpeaking(false);
     }
     resume() {
-        if (this.isDestroyed || !this.isPaused)
+        if (this.isDestroyed)
             return;
-        this.isPaused = false;
-        if (this.lastPauseTime) {
-            this.totalPausedTime += Date.now() - this.lastPauseTime;
-            this.lastPauseTime = undefined;
-        }
         this.videoStream?.resume();
         this.audioStream?.resume();
         this.udp.mediaConnection.setSpeaking(true);
