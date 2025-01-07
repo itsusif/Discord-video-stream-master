@@ -83,7 +83,7 @@ export class BaseMediaStream extends Writable {
         
         // Convert relative PTS to absolute
         const absolutePts = pts - (this._firstPts ?? 0);
-        
+        console.log(absolutePts, this._seekTarget);
         if (absolutePts >= this._seekTarget) {
             this._seekTarget = undefined;
             this._startTime = undefined;
